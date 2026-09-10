@@ -3,7 +3,7 @@ import remarkBreaks from "remark-breaks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArchiveIcon, ArrowClockwiseIcon, CaretDownIcon, FileIcon, FileTextIcon, FilePdfIcon, ImageIcon, GlobeIcon, GithubLogoIcon, EnvelopeOpenIcon, PaperPlaneTiltIcon } from "@phosphor-icons/react";
 import { definePluginApp, UrlLink, experimental_useSidebarThreads, useBbNavigate, useRealtime, useRealtimeConnectionState, useRpc } from "@get-bb/plugin-sdk/app";
-import type { ExperimentalLiveFileTarget, PluginNavPanelProps, PluginRpcResult } from "@get-bb/plugin-sdk/app";
+import type { ExperimentalLiveFileTarget, PluginNavPanelProps, PluginThreadPanelProps, PluginRpcResult } from "@get-bb/plugin-sdk/app";
 import { fileContextSchema, safeAbsolutePath, type rpcContract } from "./contract";
 
 const INBOX_CHANGED_CHANNEL = "messages-changed";
@@ -109,12 +109,16 @@ function stateLabel(message: OperatorMessage): string {
   return deliveryLabel(message) ?? (message.readAtMs === null ? "Unread" : "Read");
 }
 
-function InboxPanel(_props: PluginNavPanelProps) {
+// The same panel backs the top-level Inbox route and the per-thread side-panel tab.
+// `lockedProjectId` pins the tab to the thread's project: the stored project filter
+// is ignored and the project picker is replaced by a static label.
+type InboxPanelProps = Partial<PluginNavPanelProps> & { lockedProjectId?: string };
+function InboxPanel({ lockedProjectId }: InboxPanelProps) {
   const sidebar = experimental_useSidebarThreads();
   const navigate = useBbNavigate();
   const rpc = useRpc<typeof rpcContract>();
   const [filters, setFilters] = useState<InboxFilters>(readInboxFilters);
-  const projectId = filters.projectId && sidebar.projects.some((project) => project.id === filters.projectId) ? filters.projectId : "";
+  const projectId = lockedProjectId ?? (filters.projectId && sidebar.projects.some((project) => project.id === filters.projectId) ? filters.projectId : "");
   const { showArchived } = filters;
   const [messages, setMessages] = useState<readonly OperatorMessage[]>([]);
   const [selectedMessageKey, setSelectedMessageKey] = useState<string | null | undefined>(undefined);
@@ -231,7 +235,7 @@ function InboxPanel(_props: PluginNavPanelProps) {
       <p className="text-xs text-muted-foreground" aria-live="polite">{unreadCount ? `${unreadCount} unread` : "All caught up"}</p>
     </header>
     <section aria-label="Inbox toolbar" className="flex flex-wrap items-center gap-2">
-      <label className="min-w-0 flex-1 basis-40"><span className="sr-only">Project</span><select className="min-h-9 w-full min-w-0 rounded-md border border-border bg-background px-2 py-1.5 text-sm" value={projectId} onChange={(event) => setFiltersAndPersist({ projectId: event.target.value, showArchived })}><option value="">All projects</option>{sidebar.projects.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}</select></label>
+      {lockedProjectId ? <p className="min-w-0 flex-1 basis-40 truncate text-sm text-muted-foreground" title={currentProjectLabel}>{currentProjectLabel}</p> : <label className="min-w-0 flex-1 basis-40"><span className="sr-only">Project</span><select className="min-h-9 w-full min-w-0 rounded-md border border-border bg-background px-2 py-1.5 text-sm" value={projectId} onChange={(event) => setFiltersAndPersist({ projectId: event.target.value, showArchived })}><option value="">All projects</option>{sidebar.projects.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}</select></label>}
       <label className="flex min-h-9 items-center gap-2 text-xs text-muted-foreground"><input type="checkbox" checked={showArchived} onChange={(event) => setFiltersAndPersist({ projectId, showArchived: event.target.checked })} />Show archived</label>
       <button type="button" aria-label="Refresh inbox" title="Refresh inbox" className="flex min-h-9 min-w-9 items-center justify-center rounded-md border border-border text-foreground hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-50" onClick={refresh} disabled={loading}><ArrowClockwiseIcon aria-hidden="true" weight="duotone" size={16} /></button>
     </section>
@@ -304,4 +308,15 @@ function InboxUnreadAccessory() {
   return <span role="status" aria-live="polite" aria-label={label} title={label} className="max-w-full truncate rounded-full bg-primary px-1.5 text-xs font-semibold leading-5 text-primary-foreground">{unread}</span>;
 }
 
-export default definePluginApp((app) => { app.slots.navPanel({ id: "inbox", title: "Inbox", icon: "./assets/envelope-simple-duotone.svg", path: "inbox", component: InboxPanel, experimental_sidebarAccessory: InboxUnreadAccessory }); });
+function InboxThreadTab({ threadId }: PluginThreadPanelProps) {
+  const sidebar = experimental_useSidebarThreads();
+  const projectId = sidebar.threads.find((thread) => thread.id === threadId)?.projectId;
+  const known = projectId ? sidebar.projects.some((project) => project.id === projectId) : false;
+  if (!projectId || !known) return <section className="p-6 text-center"><h2 className="font-medium">No project for this thread</h2><p className="mt-1 text-sm text-muted-foreground">Operator Inbox messages are project-scoped. Open the Inbox from the sidebar to browse every project.</p></section>;
+  return <InboxPanel lockedProjectId={projectId} />;
+}
+
+export default definePluginApp((app) => {
+  app.slots.navPanel({ id: "inbox", title: "Inbox", icon: "./assets/envelope-simple-duotone.svg", path: "inbox", component: InboxPanel, experimental_sidebarAccessory: InboxUnreadAccessory });
+  app.slots.threadPanelAction({ id: "inbox", title: "Inbox", icon: "Mail", layout: "flush", component: InboxThreadTab });
+});

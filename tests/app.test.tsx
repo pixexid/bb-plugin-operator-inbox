@@ -335,3 +335,36 @@ it("archives from the header without expanding or reading the collapsed card", a
   expect(rpc.markOperatorMessageRead).toHaveBeenCalledTimes(1);
   expect(rpc.markOperatorMessageRead).toHaveBeenCalledWith({ projectId: "project-a", messageId: 1 });
 });
+
+describe("Operator Inbox thread tab", () => {
+  const thread = { id: "thread-here", projectId: "project-a", title: "Current thread", status: "active" };
+  const otherProject = { id: "project-b", name: "Project B", isPersonal: false };
+
+  it("registers a thread panel action and scopes the tab to the thread's project", async () => {
+    const { renderSlot } = await import("@get-bb/plugin-sdk/testing/app");
+    const app = await loadApp();
+    expect(app.threadPanelActions.map((action) => action.id)).toEqual(["inbox"]);
+    const rpc = handlers();
+    const rendered = renderSlot(app.threadPanelActions[0]!, { threadId: "thread-here", params: null }, {
+      sidebarThreads: { status: "ready", projects: [project, otherProject], threads: [thread as never] },
+      rpc: rpc as never,
+    });
+    expect(await rendered.findByText("Decision needed")).toBeTruthy();
+    expect(rpc.operatorMessages).toHaveBeenCalledWith({ projectIds: ["project-a"] });
+    expect(rendered.queryByRole("combobox", { name: "Project" })).toBeNull();
+    expect(rendered.getByTitle("Project A").textContent).toBe("Project A");
+  });
+
+  it("stays inert when the thread has no resolvable project", async () => {
+    const { renderSlot } = await import("@get-bb/plugin-sdk/testing/app");
+    const app = await loadApp();
+    const rpc = handlers();
+    const rendered = renderSlot(app.threadPanelActions[0]!, { threadId: "thread-unknown", params: null }, {
+      sidebarThreads: { status: "ready", projects: [project], threads: [thread as never] },
+      rpc: rpc as never,
+    });
+    expect(await rendered.findByText(/no project/i)).toBeTruthy();
+    await act(async () => { await Promise.resolve(); });
+    expect(rpc.operatorMessages).not.toHaveBeenCalled();
+  });
+});
