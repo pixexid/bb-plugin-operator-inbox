@@ -368,3 +368,23 @@ describe("Operator Inbox thread tab", () => {
     expect(rpc.operatorMessages).not.toHaveBeenCalled();
   });
 });
+
+describe("Operator Inbox reply drafts", () => {
+  it("keeps a reply draft across unmount and remount and clears it once the reply is accepted", async () => {
+    const { renderSlot } = await import("@get-bb/plugin-sdk/testing/app");
+    const app = await loadApp();
+    const rpc = handlers();
+    const options = { sidebarThreads: { status: "ready" as const, projects: [project], threads: [] }, rpc: rpc as never };
+    const first = renderSlot(app.navPanels[0]!, { subPath: "" }, options);
+    fireEvent.change(await first.findByLabelText("Reply text"), { target: { value: "Half-typed answer" } });
+    first.unmount();
+    const second = renderSlot(app.navPanels[0]!, { subPath: "" }, options);
+    expect((await second.findByLabelText("Reply text") as HTMLTextAreaElement).value).toBe("Half-typed answer");
+    fireEvent.click(second.getByRole("button", { name: "Send reply" }));
+    await second.findByText(/Reply accepted by BB \(queued\)/);
+    second.unmount();
+    const third = renderSlot(app.navPanels[0]!, { subPath: "" }, options);
+    await third.findByRole("button", { name: /^Collapse message #1/ });
+    expect(JSON.parse(window.localStorage.getItem("operator-inbox.drafts") ?? "{}")).toEqual({});
+  });
+});
