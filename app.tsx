@@ -1,9 +1,9 @@
 import ReactMarkdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArchiveIcon, ArrowClockwiseIcon, CaretDownIcon, FileIcon, FileTextIcon, FilePdfIcon, ImageIcon, GlobeIcon, GithubLogoIcon, EnvelopeOpenIcon, PaperPlaneTiltIcon } from "@phosphor-icons/react";
+import { ArchiveIcon, ArrowClockwiseIcon, CaretDownIcon, FileIcon, FileTextIcon, FilePdfIcon, ImageIcon, GlobeIcon, GithubLogoIcon, EnvelopeOpenIcon, PaperPlaneTiltIcon, PushPinIcon, PushPinSlashIcon } from "@phosphor-icons/react";
 import { definePluginApp, UrlLink, experimental_useSidebarThreads, useBbNavigate, useRealtime, useRealtimeConnectionState, useRpc } from "@get-bb/plugin-sdk/app";
-import type { ExperimentalLiveFileTarget, PluginNavPanelProps, PluginRpcResult } from "@get-bb/plugin-sdk/app";
+import type { ExperimentalLiveFileTarget, PluginNavPanelProps, PluginThreadHeaderActionProps, PluginThreadPanelProps, PluginRpcResult } from "@get-bb/plugin-sdk/app";
 import { fileContextSchema, safeAbsolutePath, type rpcContract } from "./contract";
 
 const INBOX_CHANGED_CHANNEL = "messages-changed";
@@ -78,6 +78,23 @@ type PendingInboxAction = { key: string; action: "mark-read" | "archive" };
 function asText(value: unknown): string | null { return typeof value === "string" && value.trim() ? value : null; }
 const MAX_VISIBLE_INBOX_MESSAGES = 256;
 const INBOX_FILTER_STORAGE_KEY = "operator-inbox.filters";
+const INBOX_DRAFT_STORAGE_KEY = "operator-inbox.drafts";
+const INBOX_PINNED_STORAGE_KEY = "operator-inbox.pinned";
+const THREAD_PANEL_ACTION_ID = "inbox";
+// Pinned = the Inbox tab opens by itself the first time each thread is viewed
+// in this browser. Default on; an explicit "false" turns it off.
+function readInboxPinned(): boolean { try { return window.localStorage.getItem(INBOX_PINNED_STORAGE_KEY) !== "false"; } catch { return true; } }
+function writeInboxPinned(pinned: boolean): void { try { window.localStorage.setItem(INBOX_PINNED_STORAGE_KEY, String(pinned)); } catch {} }
+// Reply drafts outlive the panel: switching side-panel tabs unmounts it, so
+// in-memory state alone would drop half-typed replies. Keyed by message key.
+function readReplyDrafts(): Record<string, string> {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(INBOX_DRAFT_STORAGE_KEY) ?? "null") as unknown;
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1] !== ""));
+  } catch { return {}; }
+}
+function writeReplyDrafts(drafts: Record<string, string>): void { try { window.localStorage.setItem(INBOX_DRAFT_STORAGE_KEY, JSON.stringify(drafts)); } catch {} }
 function readInboxFilters(): InboxFilters {
   try { const value = JSON.parse(window.localStorage.getItem(INBOX_FILTER_STORAGE_KEY) ?? "null") as Partial<InboxFilters> | null; return { projectId: typeof value?.projectId === "string" ? value.projectId : "", showArchived: value?.showArchived === true }; }
   catch { return { projectId: "", showArchived: false }; }
@@ -109,17 +126,22 @@ function stateLabel(message: OperatorMessage): string {
   return deliveryLabel(message) ?? (message.readAtMs === null ? "Unread" : "Read");
 }
 
-function InboxPanel(_props: PluginNavPanelProps) {
+// The same panel backs the top-level Inbox route and the per-thread side-panel tab.
+// `lockedProjectId` pins the tab to the thread's project: the stored project filter
+// is ignored and the project picker is replaced by a static label.
+type InboxPanelProps = Partial<PluginNavPanelProps> & { lockedProjectId?: string };
+function InboxPanel({ lockedProjectId }: InboxPanelProps) {
   const sidebar = experimental_useSidebarThreads();
   const navigate = useBbNavigate();
   const rpc = useRpc<typeof rpcContract>();
   const [filters, setFilters] = useState<InboxFilters>(readInboxFilters);
-  const projectId = filters.projectId && sidebar.projects.some((project) => project.id === filters.projectId) ? filters.projectId : "";
+  const projectId = lockedProjectId ?? (filters.projectId && sidebar.projects.some((project) => project.id === filters.projectId) ? filters.projectId : "");
   const { showArchived } = filters;
   const [messages, setMessages] = useState<readonly OperatorMessage[]>([]);
   const [selectedMessageKey, setSelectedMessageKey] = useState<string | null | undefined>(undefined);
   const [loading, setLoading] = useState(true);
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [drafts, setDraftsState] = useState<Record<string, string>>(readReplyDrafts);
+  const setDrafts = useCallback((update: (current: Record<string, string>) => Record<string, string>) => setDraftsState((current) => { const next = update(current); writeReplyDrafts(next); return next; }), []);
   const [replyingMessageKey, setReplyingMessageKey] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<PendingInboxAction | null>(null);
   const [errors, setErrors] = useState<readonly string[]>([]);
@@ -231,7 +253,7 @@ function InboxPanel(_props: PluginNavPanelProps) {
       <p className="text-xs text-muted-foreground" aria-live="polite">{unreadCount ? `${unreadCount} unread` : "All caught up"}</p>
     </header>
     <section aria-label="Inbox toolbar" className="flex flex-wrap items-center gap-2">
-      <label className="min-w-0 flex-1 basis-40"><span className="sr-only">Project</span><select className="min-h-9 w-full min-w-0 rounded-md border border-border bg-background px-2 py-1.5 text-sm" value={projectId} onChange={(event) => setFiltersAndPersist({ projectId: event.target.value, showArchived })}><option value="">All projects</option>{sidebar.projects.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}</select></label>
+      {lockedProjectId ? <p className="min-w-0 flex-1 basis-40 truncate text-sm text-muted-foreground" title={currentProjectLabel}>{currentProjectLabel}</p> : <label className="min-w-0 flex-1 basis-40"><span className="sr-only">Project</span><select className="min-h-9 w-full min-w-0 rounded-md border border-border bg-background px-2 py-1.5 text-sm" value={projectId} onChange={(event) => setFiltersAndPersist({ projectId: event.target.value, showArchived })}><option value="">All projects</option>{sidebar.projects.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}</select></label>}
       <label className="flex min-h-9 items-center gap-2 text-xs text-muted-foreground"><input type="checkbox" checked={showArchived} onChange={(event) => setFiltersAndPersist({ projectId, showArchived: event.target.checked })} />Show archived</label>
       <button type="button" aria-label="Refresh inbox" title="Refresh inbox" className="flex min-h-9 min-w-9 items-center justify-center rounded-md border border-border text-foreground hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-50" onClick={refresh} disabled={loading}><ArrowClockwiseIcon aria-hidden="true" weight="duotone" size={16} /></button>
     </section>
@@ -266,7 +288,7 @@ function InboxPanel(_props: PluginNavPanelProps) {
               {selectedSenderId && <a href="#" className="w-fit max-w-full break-words text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary" aria-label={`Open sender thread ${senderLabel(selectedMessage)}`} onClick={(event) => { event.preventDefault(); navigate.toThread(selectedSenderId); }}>Open sender thread</a>}
               <MessageBody key={messageKey(selectedMessage)} text={selectedMessage.text} message={selectedMessage} />
           {selectedMessage.replyAcceptedAtMs != null ? <section aria-label="Reply accepted by BB" className="grid gap-2 rounded-md border border-border bg-muted/10 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold">Reply accepted by BB</h3><time className="text-xs text-muted-foreground" dateTime={new Date(selectedMessage.replyAcceptedAtMs).toISOString()} title={formatExactTime(selectedMessage.replyAcceptedAtMs)} aria-label={`Accepted ${formatExactTime(selectedMessage.replyAcceptedAtMs)}`}>{formatRelativeTime(selectedMessage.replyAcceptedAtMs)}</time></div><MessageBody text={selectedMessage.replyText ?? ""} /><p className="text-xs text-muted-foreground">BB reported {selectedMessage.replyDelivery ?? "accepted"}. Provider consumption is not observed.</p></section> : <section aria-label="Reply to sender" className="grid gap-3 border-t border-border pt-4"><label className="grid gap-1 text-sm" htmlFor={`operator-reply-${replyKey}`}><span className="sr-only">Reply text</span><textarea placeholder="Reply to sender" id={`operator-reply-${replyKey}`} className="min-h-24 w-full rounded-md border border-border bg-background p-2.5 text-sm leading-5 focus:bg-muted/50 focus:outline-none focus:ring-0" value={replyText} onChange={(event) => setDrafts((current) => ({ ...current, [replyKey!]: event.target.value }))} /></label></section>}
-          <div className="flex flex-wrap gap-2 border-t border-border pt-4"><button type="button" aria-label={replyingMessageKey === replyKey ? "Sending reply" : selectedMessage.replyAcceptedAtMs != null ? "Reply accepted by BB" : "Send reply"} title={replyingMessageKey === replyKey ? "Sending reply" : selectedMessage.replyAcceptedAtMs != null ? "Reply accepted by BB" : "Send reply"} disabled={replyingMessageKey !== null || pendingAction !== null || selectedMessage.replyAcceptedAtMs != null || !replyText.trim()} className="min-h-10 min-w-10 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity duration-150 hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary motion-reduce:transition-none" onClick={() => { const text = replyText.trim(); if (!text || !replyKey) return; setErrors([]); setNotice(null); setReplyingMessageKey(replyKey); void rpc.call("replyToOperatorMessage", { projectId: selectedMessage.projectId, messageId: selectedMessage.messageId, text }).then((replied) => { updateMessage(replied); setNotice(`Reply accepted by BB (${replied.replyDelivery ?? "accepted"}). Provider consumption is not observed.`); }).catch((reason: unknown) => setErrors([String(reason)])).finally(() => setReplyingMessageKey(null)); }}><PaperPlaneTiltIcon aria-hidden="true" focusable="false" color="currentColor" weight="duotone" size={18} /></button>{selectedMessage.readAtMs === null ? <button type="button" aria-busy={markReadPending} aria-label={markReadPending ? "Marking message read" : "Mark message read"} title={markReadPending ? "Marking message read" : "Mark message read"} disabled={pendingAction !== null} className="min-h-10 min-w-10 rounded-md border border-border bg-background px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted active:bg-muted/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none" onClick={markSelectedMessageRead}><EnvelopeOpenIcon aria-hidden="true" focusable="false" color="currentColor" weight="duotone" size={18} /></button> : null}</div>
+          <div className="flex flex-wrap gap-2 border-t border-border pt-4"><button type="button" aria-label={replyingMessageKey === replyKey ? "Sending reply" : selectedMessage.replyAcceptedAtMs != null ? "Reply accepted by BB" : "Send reply"} title={replyingMessageKey === replyKey ? "Sending reply" : selectedMessage.replyAcceptedAtMs != null ? "Reply accepted by BB" : "Send reply"} disabled={replyingMessageKey !== null || pendingAction !== null || selectedMessage.replyAcceptedAtMs != null || !replyText.trim()} className="min-h-10 min-w-10 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity duration-150 hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary motion-reduce:transition-none" onClick={() => { const text = replyText.trim(); if (!text || !replyKey) return; setErrors([]); setNotice(null); setReplyingMessageKey(replyKey); void rpc.call("replyToOperatorMessage", { projectId: selectedMessage.projectId, messageId: selectedMessage.messageId, text }).then((replied) => { updateMessage(replied); setDrafts((current) => { const { [replyKey]: _sent, ...rest } = current; return rest; }); setNotice(`Reply accepted by BB (${replied.replyDelivery ?? "accepted"}). Provider consumption is not observed.`); }).catch((reason: unknown) => setErrors([String(reason)])).finally(() => setReplyingMessageKey(null)); }}><PaperPlaneTiltIcon aria-hidden="true" focusable="false" color="currentColor" weight="duotone" size={18} /></button>{selectedMessage.readAtMs === null ? <button type="button" aria-busy={markReadPending} aria-label={markReadPending ? "Marking message read" : "Mark message read"} title={markReadPending ? "Marking message read" : "Mark message read"} disabled={pendingAction !== null} className="min-h-10 min-w-10 rounded-md border border-border bg-background px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted active:bg-muted/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none" onClick={markSelectedMessageRead}><EnvelopeOpenIcon aria-hidden="true" focusable="false" color="currentColor" weight="duotone" size={18} /></button> : null}</div>
             </div>}
           </div>
 
@@ -304,4 +326,37 @@ function InboxUnreadAccessory() {
   return <span role="status" aria-live="polite" aria-label={label} title={label} className="max-w-full truncate rounded-full bg-primary px-1.5 text-xs font-semibold leading-5 text-primary-foreground">{unread}</span>;
 }
 
-export default definePluginApp((app) => { app.slots.navPanel({ id: "inbox", title: "Inbox", icon: "./assets/envelope-simple-duotone.svg", path: "inbox", component: InboxPanel, experimental_sidebarAccessory: InboxUnreadAccessory }); });
+function InboxThreadTab({ threadId }: PluginThreadPanelProps) {
+  const sidebar = experimental_useSidebarThreads();
+  const projectId = sidebar.threads.find((thread) => thread.id === threadId)?.projectId;
+  const known = projectId ? sidebar.projects.some((project) => project.id === projectId) : false;
+  if (!projectId || !known) return <section className="p-6 text-center"><h2 className="font-medium">No project for this thread</h2><p className="mt-1 text-sm text-muted-foreground">Operator Inbox messages are project-scoped. Open the Inbox from the sidebar to browse every project.</p></section>;
+  return <InboxPanel lockedProjectId={projectId} />;
+}
+
+function InboxPinHeaderAction({ threadId }: PluginThreadHeaderActionProps) {
+  const { openThreadPanel } = useBbNavigate();
+  const [pinned, setPinned] = useState(readInboxPinned);
+  const autoOpenedThreadRef = useRef<string | null>(null);
+  const openInbox = useCallback(() => openThreadPanel({ actionId: THREAD_PANEL_ACTION_ID, title: "Inbox" }), [openThreadPanel]);
+  useEffect(() => {
+    if (!pinned || autoOpenedThreadRef.current === threadId) return;
+    autoOpenedThreadRef.current = threadId;
+    // Defer past the host's own panel restore so a persisted tab wins over a duplicate open.
+    const timeout = window.setTimeout(() => { openInbox(); }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [openInbox, pinned, threadId]);
+  const label = pinned ? "Unpin Inbox from the side panel" : "Pin Inbox to the side panel";
+  return <button type="button" aria-pressed={pinned} aria-label={label} title={label} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary" onClick={() => {
+    const next = !pinned;
+    setPinned(next);
+    writeInboxPinned(next);
+    if (next) openInbox();
+  }}>{pinned ? <PushPinIcon aria-hidden="true" weight="duotone" size={16} /> : <PushPinSlashIcon aria-hidden="true" weight="duotone" size={16} />}</button>;
+}
+
+export default definePluginApp((app) => {
+  app.slots.navPanel({ id: "inbox", title: "Inbox", icon: "./assets/envelope-simple-duotone.svg", path: "inbox", component: InboxPanel, experimental_sidebarAccessory: InboxUnreadAccessory });
+  app.slots.threadPanelAction({ id: THREAD_PANEL_ACTION_ID, title: "Inbox", icon: "Mail", layout: "flush", component: InboxThreadTab });
+  app.slots.experimental_threadHeaderAction({ id: "pin-inbox", title: "Inbox", component: InboxPinHeaderAction });
+});

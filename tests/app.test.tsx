@@ -335,3 +335,86 @@ it("archives from the header without expanding or reading the collapsed card", a
   expect(rpc.markOperatorMessageRead).toHaveBeenCalledTimes(1);
   expect(rpc.markOperatorMessageRead).toHaveBeenCalledWith({ projectId: "project-a", messageId: 1 });
 });
+
+describe("Operator Inbox thread tab", () => {
+  const thread = { id: "thread-here", projectId: "project-a", title: "Current thread", status: "active" };
+  const otherProject = { id: "project-b", name: "Project B", isPersonal: false };
+
+  it("registers a thread panel action and scopes the tab to the thread's project", async () => {
+    const { renderSlot } = await import("@get-bb/plugin-sdk/testing/app");
+    const app = await loadApp();
+    expect(app.threadPanelActions.map((action) => action.id)).toEqual(["inbox"]);
+    const rpc = handlers();
+    const rendered = renderSlot(app.threadPanelActions[0]!, { threadId: "thread-here", params: null }, {
+      sidebarThreads: { status: "ready", projects: [project, otherProject], threads: [thread as never] },
+      rpc: rpc as never,
+    });
+    expect(await rendered.findByText("Decision needed")).toBeTruthy();
+    expect(rpc.operatorMessages).toHaveBeenCalledWith({ projectIds: ["project-a"] });
+    expect(rendered.queryByRole("combobox", { name: "Project" })).toBeNull();
+    expect(rendered.getByTitle("Project A").textContent).toBe("Project A");
+  });
+
+  it("stays inert when the thread has no resolvable project", async () => {
+    const { renderSlot } = await import("@get-bb/plugin-sdk/testing/app");
+    const app = await loadApp();
+    const rpc = handlers();
+    const rendered = renderSlot(app.threadPanelActions[0]!, { threadId: "thread-unknown", params: null }, {
+      sidebarThreads: { status: "ready", projects: [project], threads: [thread as never] },
+      rpc: rpc as never,
+    });
+    expect(await rendered.findByText(/no project/i)).toBeTruthy();
+    await act(async () => { await Promise.resolve(); });
+    expect(rpc.operatorMessages).not.toHaveBeenCalled();
+  });
+});
+
+describe("Operator Inbox reply drafts", () => {
+  it("keeps a reply draft across unmount and remount and clears it once the reply is accepted", async () => {
+    const { renderSlot } = await import("@get-bb/plugin-sdk/testing/app");
+    const app = await loadApp();
+    const rpc = handlers();
+    const options = { sidebarThreads: { status: "ready" as const, projects: [project], threads: [] }, rpc: rpc as never };
+    const first = renderSlot(app.navPanels[0]!, { subPath: "" }, options);
+    fireEvent.change(await first.findByLabelText("Reply text"), { target: { value: "Half-typed answer" } });
+    first.unmount();
+    const second = renderSlot(app.navPanels[0]!, { subPath: "" }, options);
+    expect((await second.findByLabelText("Reply text") as HTMLTextAreaElement).value).toBe("Half-typed answer");
+    fireEvent.click(second.getByRole("button", { name: "Send reply" }));
+    await second.findByText(/Reply accepted by BB \(queued\)/);
+    second.unmount();
+    const third = renderSlot(app.navPanels[0]!, { subPath: "" }, options);
+    await third.findByRole("button", { name: /^Collapse message #1/ });
+    expect(JSON.parse(window.localStorage.getItem("operator-inbox.drafts") ?? "{}")).toEqual({});
+  });
+});
+
+describe("Operator Inbox thread header action", () => {
+  const thread = { id: "thread-here", projectId: "project-a", title: "Current thread", status: "active" };
+  const options = () => ({ sidebarThreads: { status: "ready" as const, projects: [project], threads: [thread as never] }, rpc: handlers() as never });
+
+  it("auto-opens the Inbox tab once per thread while pinned, which is the default", async () => {
+    const { renderSlot } = await import("@get-bb/plugin-sdk/testing/app");
+    const app = await loadApp();
+    expect(app.threadHeaderActions.map((action) => action.id)).toEqual(["pin-inbox"]);
+    const rendered = renderSlot(app.threadHeaderActions[0]!, { threadId: "thread-here", projectId: "project-a", isCompactViewport: false }, options());
+    await waitFor(() => expect(rendered.inspection.navigateCalls).toContainEqual({ method: "openThreadPanel", options: { actionId: "inbox", title: "Inbox" } }));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); });
+    expect(rendered.inspection.navigateCalls.filter((call) => call.method === "openThreadPanel")).toHaveLength(1);
+    expect(rendered.getByRole("button", { name: "Unpin Inbox from the side panel" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("stays quiet when unpinned and pins plus opens on click", async () => {
+    const { renderSlot } = await import("@get-bb/plugin-sdk/testing/app");
+    window.localStorage.setItem("operator-inbox.pinned", "false");
+    const app = await loadApp();
+    const rendered = renderSlot(app.threadHeaderActions[0]!, { threadId: "thread-here", projectId: "project-a", isCompactViewport: false }, options());
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); });
+    expect(rendered.inspection.navigateCalls).toEqual([]);
+    fireEvent.click(rendered.getByRole("button", { name: "Pin Inbox to the side panel" }));
+    expect(rendered.inspection.navigateCalls).toContainEqual({ method: "openThreadPanel", options: { actionId: "inbox", title: "Inbox" } });
+    expect(window.localStorage.getItem("operator-inbox.pinned")).toBe("true");
+    fireEvent.click(rendered.getByRole("button", { name: "Unpin Inbox from the side panel" }));
+    expect(window.localStorage.getItem("operator-inbox.pinned")).toBe("false");
+  });
+});
