@@ -388,3 +388,33 @@ describe("Operator Inbox reply drafts", () => {
     expect(JSON.parse(window.localStorage.getItem("operator-inbox.drafts") ?? "{}")).toEqual({});
   });
 });
+
+describe("Operator Inbox thread header action", () => {
+  const thread = { id: "thread-here", projectId: "project-a", title: "Current thread", status: "active" };
+  const options = () => ({ sidebarThreads: { status: "ready" as const, projects: [project], threads: [thread as never] }, rpc: handlers() as never });
+
+  it("auto-opens the Inbox tab once per thread while pinned, which is the default", async () => {
+    const { renderSlot } = await import("@get-bb/plugin-sdk/testing/app");
+    const app = await loadApp();
+    expect(app.threadHeaderActions.map((action) => action.id)).toEqual(["pin-inbox"]);
+    const rendered = renderSlot(app.threadHeaderActions[0]!, { threadId: "thread-here", projectId: "project-a", isCompactViewport: false }, options());
+    await waitFor(() => expect(rendered.inspection.navigateCalls).toContainEqual({ method: "openThreadPanel", options: { actionId: "inbox", title: "Inbox" } }));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); });
+    expect(rendered.inspection.navigateCalls.filter((call) => call.method === "openThreadPanel")).toHaveLength(1);
+    expect(rendered.getByRole("button", { name: "Unpin Inbox from the side panel" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("stays quiet when unpinned and pins plus opens on click", async () => {
+    const { renderSlot } = await import("@get-bb/plugin-sdk/testing/app");
+    window.localStorage.setItem("operator-inbox.pinned", "false");
+    const app = await loadApp();
+    const rendered = renderSlot(app.threadHeaderActions[0]!, { threadId: "thread-here", projectId: "project-a", isCompactViewport: false }, options());
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); });
+    expect(rendered.inspection.navigateCalls).toEqual([]);
+    fireEvent.click(rendered.getByRole("button", { name: "Pin Inbox to the side panel" }));
+    expect(rendered.inspection.navigateCalls).toContainEqual({ method: "openThreadPanel", options: { actionId: "inbox", title: "Inbox" } });
+    expect(window.localStorage.getItem("operator-inbox.pinned")).toBe("true");
+    fireEvent.click(rendered.getByRole("button", { name: "Unpin Inbox from the side panel" }));
+    expect(window.localStorage.getItem("operator-inbox.pinned")).toBe("false");
+  });
+});

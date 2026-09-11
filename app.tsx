@@ -1,9 +1,9 @@
 import ReactMarkdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArchiveIcon, ArrowClockwiseIcon, CaretDownIcon, FileIcon, FileTextIcon, FilePdfIcon, ImageIcon, GlobeIcon, GithubLogoIcon, EnvelopeOpenIcon, PaperPlaneTiltIcon } from "@phosphor-icons/react";
+import { ArchiveIcon, ArrowClockwiseIcon, CaretDownIcon, FileIcon, FileTextIcon, FilePdfIcon, ImageIcon, GlobeIcon, GithubLogoIcon, EnvelopeOpenIcon, PaperPlaneTiltIcon, PushPinIcon, PushPinSlashIcon } from "@phosphor-icons/react";
 import { definePluginApp, UrlLink, experimental_useSidebarThreads, useBbNavigate, useRealtime, useRealtimeConnectionState, useRpc } from "@get-bb/plugin-sdk/app";
-import type { ExperimentalLiveFileTarget, PluginNavPanelProps, PluginThreadPanelProps, PluginRpcResult } from "@get-bb/plugin-sdk/app";
+import type { ExperimentalLiveFileTarget, PluginNavPanelProps, PluginThreadHeaderActionProps, PluginThreadPanelProps, PluginRpcResult } from "@get-bb/plugin-sdk/app";
 import { fileContextSchema, safeAbsolutePath, type rpcContract } from "./contract";
 
 const INBOX_CHANGED_CHANNEL = "messages-changed";
@@ -79,6 +79,12 @@ function asText(value: unknown): string | null { return typeof value === "string
 const MAX_VISIBLE_INBOX_MESSAGES = 256;
 const INBOX_FILTER_STORAGE_KEY = "operator-inbox.filters";
 const INBOX_DRAFT_STORAGE_KEY = "operator-inbox.drafts";
+const INBOX_PINNED_STORAGE_KEY = "operator-inbox.pinned";
+const THREAD_PANEL_ACTION_ID = "inbox";
+// Pinned = the Inbox tab opens by itself the first time each thread is viewed
+// in this browser. Default on; an explicit "false" turns it off.
+function readInboxPinned(): boolean { try { return window.localStorage.getItem(INBOX_PINNED_STORAGE_KEY) !== "false"; } catch { return true; } }
+function writeInboxPinned(pinned: boolean): void { try { window.localStorage.setItem(INBOX_PINNED_STORAGE_KEY, String(pinned)); } catch {} }
 // Reply drafts outlive the panel: switching side-panel tabs unmounts it, so
 // in-memory state alone would drop half-typed replies. Keyed by message key.
 function readReplyDrafts(): Record<string, string> {
@@ -328,7 +334,29 @@ function InboxThreadTab({ threadId }: PluginThreadPanelProps) {
   return <InboxPanel lockedProjectId={projectId} />;
 }
 
+function InboxPinHeaderAction({ threadId }: PluginThreadHeaderActionProps) {
+  const { openThreadPanel } = useBbNavigate();
+  const [pinned, setPinned] = useState(readInboxPinned);
+  const autoOpenedThreadRef = useRef<string | null>(null);
+  const openInbox = useCallback(() => openThreadPanel({ actionId: THREAD_PANEL_ACTION_ID, title: "Inbox" }), [openThreadPanel]);
+  useEffect(() => {
+    if (!pinned || autoOpenedThreadRef.current === threadId) return;
+    autoOpenedThreadRef.current = threadId;
+    // Defer past the host's own panel restore so a persisted tab wins over a duplicate open.
+    const timeout = window.setTimeout(() => { openInbox(); }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [openInbox, pinned, threadId]);
+  const label = pinned ? "Unpin Inbox from the side panel" : "Pin Inbox to the side panel";
+  return <button type="button" aria-pressed={pinned} aria-label={label} title={label} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary" onClick={() => {
+    const next = !pinned;
+    setPinned(next);
+    writeInboxPinned(next);
+    if (next) openInbox();
+  }}>{pinned ? <PushPinIcon aria-hidden="true" weight="duotone" size={16} /> : <PushPinSlashIcon aria-hidden="true" weight="duotone" size={16} />}</button>;
+}
+
 export default definePluginApp((app) => {
   app.slots.navPanel({ id: "inbox", title: "Inbox", icon: "./assets/envelope-simple-duotone.svg", path: "inbox", component: InboxPanel, experimental_sidebarAccessory: InboxUnreadAccessory });
-  app.slots.threadPanelAction({ id: "inbox", title: "Inbox", icon: "Mail", layout: "flush", component: InboxThreadTab });
+  app.slots.threadPanelAction({ id: THREAD_PANEL_ACTION_ID, title: "Inbox", icon: "Mail", layout: "flush", component: InboxThreadTab });
+  app.slots.experimental_threadHeaderAction({ id: "pin-inbox", title: "Inbox", component: InboxPinHeaderAction });
 });
