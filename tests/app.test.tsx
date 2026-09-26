@@ -72,6 +72,27 @@ describe("Operator Inbox panel", () => {
     expect(rendered.queryByText("thread-sender")).toBeNull();
   });
 
+  it("refreshes messages without showing a layout-shifting loading row", async () => {
+    const { renderSlot } = await import("@get-bb/plugin-sdk/testing/app");
+    const app = await loadApp();
+    let finishRefresh!: (value: { messages: (typeof message)[] }) => void;
+    const operatorMessages = vi.fn()
+      .mockResolvedValueOnce({ messages: [message] })
+      .mockReturnValueOnce(new Promise((resolve) => { finishRefresh = resolve; }));
+    const rendered = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+      sidebarThreads: { status: "ready", projects: [project], threads: [] },
+      rpc: handlers({ operatorMessages }) as never,
+    });
+
+    expect(await rendered.findByText("Decision needed")).toBeTruthy();
+    fireEvent.click(rendered.getByRole("button", { name: "Refresh inbox" }));
+    await waitFor(() => expect(operatorMessages).toHaveBeenCalledTimes(2));
+    expect(rendered.queryByText("Loading messages…")).toBeNull();
+    expect(rendered.getByText("Decision needed")).toBeTruthy();
+    finishRefresh({ messages: [message] });
+    await waitFor(() => expect((rendered.getByRole("button", { name: "Refresh inbox" }) as HTMLButtonElement).disabled).toBe(false));
+  });
+
   it("records reply acceptance without claiming provider delivery or consumption", async () => {
     const { renderSlot } = await import("@get-bb/plugin-sdk/testing/app");
     const app = await loadApp();

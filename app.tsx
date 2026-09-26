@@ -238,7 +238,6 @@ function InboxPanel(_props: PluginNavPanelProps) {
     {errors.map((loadError) => <p role="alert" key={loadError} className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{loadError}</p>)}
     {notice ? <p role="status" className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm text-primary">{notice}</p> : null}
     {sidebar.projects.length === 0 ? <section className="rounded-lg border border-dashed border-border p-6 text-center"><h2 className="font-medium">No projects available</h2><p className="mt-1 text-sm text-muted-foreground">A project is required before operator messages can appear here.</p></section> : <section aria-label={`${currentProjectLabel} messages`} className="grid min-w-0 gap-3">
-      {loading ? <p role="status" className="py-3 text-sm text-muted-foreground">Loading messages…</p> : null}
       {!loading && messages.length === 0 ? <div className="rounded-lg border border-dashed border-border p-5"><p className="font-medium">No messages in this view</p><p className="mt-1 text-sm text-muted-foreground">Try another project or show archived messages.</p></div> : null}
       {messages.length > MAX_VISIBLE_INBOX_MESSAGES ? <p className="text-xs text-muted-foreground">Showing the first {MAX_VISIBLE_INBOX_MESSAGES} of {messages.length} messages. Newest messages appear first.</p> : null}
       <div role="list" aria-label="Operator messages" className="grid min-w-0 gap-3">{visibleMessages.map((message) => {
