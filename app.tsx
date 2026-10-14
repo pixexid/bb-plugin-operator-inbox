@@ -1,7 +1,7 @@
 import ReactMarkdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { ArchiveIcon, ArrowClockwiseIcon, CaretDownIcon, FileIcon, FileTextIcon, FilePdfIcon, ImageIcon, GlobeIcon, GithubLogoIcon, EnvelopeSimpleIcon, EnvelopeOpenIcon, PaperPlaneTiltIcon } from "@phosphor-icons/react";
 import { definePluginApp, UrlLink, experimental_useSidebarThreads, useBbNavigate, useRealtime, useRealtimeConnectionState, useRpc } from "@get-bb/plugin-sdk/app";
 import type { ExperimentalLiveFileTarget, PluginNavPanelProps, PluginRpcResult, PluginThreadPanelProps } from "@get-bb/plugin-sdk/app";
@@ -361,12 +361,19 @@ function InboxCountController() {
   return null;
 }
 
+const BADGE_STYLE: CSSProperties = {
+  position: "absolute", top: -4, right: -6, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "center",
+  minWidth: 14, height: 14, padding: "0 3px", borderRadius: 7, fontSize: 9, fontWeight: 600, lineHeight: 1,
+  background: "var(--destructive)", color: "var(--destructive-foreground)",
+};
+
 function InboxIcon({ className }: { className?: string }) {
   const unread = useSyncExternalStore(subscribeInboxCount, getInboxCount, getInboxCount);
   const label = `${unread} unread operator ${unread === 1 ? "message" : "messages"}`;
-  return <span className={`relative inline-flex ${className ?? ""}`} title={label}>
-    <EnvelopeSimpleIcon aria-hidden="true" focusable="false" color="currentColor" weight="duotone" className="h-full w-full" />
-    {unread > 0 && <span className="absolute -right-1.5 -top-1 min-w-3.5 rounded-full bg-destructive px-0.5 text-center text-[9px] font-semibold leading-3.5 text-destructive-foreground">{unread > 99 ? "99+" : unread}</span>}
+  // Registered icons render outside plugin CSS scope, so layout is inline.
+  return <span className={className} style={{ position: "relative", display: "inline-flex" }} title={label}>
+    <EnvelopeSimpleIcon aria-hidden="true" focusable="false" color="currentColor" weight="duotone" style={{ width: "100%", height: "100%" }} />
+    {unread > 0 && <span style={BADGE_STYLE}>{unread > 99 ? "99+" : unread}</span>}
   </span>;
 }
 

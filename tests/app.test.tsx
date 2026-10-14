@@ -289,7 +289,9 @@ describe("Operator Inbox panel", () => {
     expect(icon.container.textContent).toBe("");
     count = 120;
     await controller.behavior.emitRealtime(INBOX_CHANGED_CHANNEL, { projectId: "project-a" });
-    await icon.findByText("99+");
+    const badge = await icon.findByText("99+");
+    expect(badge.style).toMatchObject({ position: "absolute", display: "flex", alignItems: "center", justifyContent: "center", minWidth: "14px", height: "14px", lineHeight: "1" });
+    expect((icon.container.firstElementChild as HTMLElement).style.position).toBe("relative");
     expect(icon.container.firstElementChild?.getAttribute("title")).toBe("120 unread operator messages");
     count = 0;
     await controller.behavior.emitRealtime(INBOX_CHANGED_CHANNEL, { projectId: "project-a" });
