@@ -47,6 +47,7 @@ export const fileContextSchema = z.object({
   storageRootPath: z.string().refine(safeAbsolutePath),
 }).strict();
 
+// Keep the shared contract browser-safe when Git installs omit SDK devDependencies.
 export const rpcContract = {
   messageFileContext: {
     input: messageMutationInputSchema,
