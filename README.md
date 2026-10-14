@@ -7,7 +7,9 @@ in a long conversation. Operator Inbox brings those requests into one BB panel,
 with the sender, project, supporting links, and a reply field together. Review
 an artifact, answer the agent, and return to your work.
 
-https://github.com/user-attachments/assets/bce96327-c9a5-44e3-aa0d-1ce06fcb00b3
+![BB navigation with the Inbox icon showing an unread count badge, and the Inbox panel open beside the thread list](assets/op-inbox.jpeg)
+
+[Watch updated demo (MP4)](https://github.com/pixexid/bb-plugin-operator-inbox/releases/download/v0.1.9/op-inbox.mp4)
 
 ## Install
 
@@ -21,9 +23,10 @@ bb plugin install https://github.com/pixexid/bb-plugin-operator-inbox
 Review and confirm the installation prompt. Open **Inbox** in BB's navigation.
 Agents receive the `send_operator_inbox_message` tool in new sessions.
 
-The Inbox navigation icon shows a badge for unread, unarchived messages
-across all projects. Clicking it opens Inbox. The badge clears after marking
-a message read, sending a reply, or archiving it.
+The Inbox navigation icon shows a badge with the count of unread, unarchived
+messages across all projects. Clicking it opens Inbox. The count goes down as
+you mark a message read, send a reply, or archive it, and the badge disappears
+only when it reaches zero.
 Each thread also has an **Inbox** side-panel action scoped to that thread's
 project.
 
@@ -49,7 +52,10 @@ before asking you to decide. Fewer, better requests make the unread count useful
   one reply. Press **Enter** to send or **Shift+Enter** for a new line;
   continue a longer conversation through **Open sender thread**.
 - **Organize:** filter by project and archive handled messages from the
-  expanded card actions. Archived messages remain available through the filter.
+  expanded card actions. Archived messages stay hidden until you choose
+  **Show archived**.
+- **Feedback:** success and error results from archiving, replying, and marking
+  read appear as BB's native toasts, so controls do not shift while you work.
 
 Cards stay newest-first by creation time. Reading, replying, and archiving do
 not reorder the remaining messages. Reading or archiving is **not approval**
