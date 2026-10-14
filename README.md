@@ -21,8 +21,9 @@ bb plugin install https://github.com/pixexid/bb-plugin-operator-inbox
 Review and confirm the installation prompt. Open **Inbox** in BB's navigation.
 Agents receive the `send_operator_inbox_message` tool in new sessions.
 
-An Inbox alert icon appears above BB's sidebar footer only while messages are
-unread. Its badge shows the unread count, and clicking it opens Inbox.
+The Inbox navigation icon shows a badge for unread, unarchived messages
+across all projects. Clicking it opens Inbox. The badge clears after marking
+a message read, sending a reply, or archiving it.
 Each thread also has an **Inbox** side-panel action scoped to that thread's
 project.
 
@@ -45,7 +46,8 @@ before asking you to decide. Fewer, better requests make the unread count useful
   file preview and browser preference. Inbox stays available beside the panel.
 - **Reply:** send an answer directly to the original sender thread. Drafts
   survive panel and tab switches for the current BB session. Each message accepts
-  one reply; continue a longer conversation through **Open sender thread**.
+  one reply. Press **Enter** to send or **Shift+Enter** for a new line;
+  continue a longer conversation through **Open sender thread**.
 - **Organize:** filter by project and archive handled messages from the
   expanded card actions. Archived messages remain available through the filter.
 

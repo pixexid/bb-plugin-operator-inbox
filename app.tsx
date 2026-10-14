@@ -1,8 +1,8 @@
 import ReactMarkdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArchiveIcon, ArrowClockwiseIcon, CaretDownIcon, FileIcon, FileTextIcon, FilePdfIcon, ImageIcon, GlobeIcon, GithubLogoIcon, EnvelopeOpenIcon, PaperPlaneTiltIcon } from "@phosphor-icons/react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
+import { ArchiveIcon, ArrowClockwiseIcon, CaretDownIcon, FileIcon, FileTextIcon, FilePdfIcon, ImageIcon, GlobeIcon, GithubLogoIcon, EnvelopeSimpleIcon, EnvelopeOpenIcon, PaperPlaneTiltIcon } from "@phosphor-icons/react";
 import { definePluginApp, UrlLink, experimental_useSidebarThreads, useBbNavigate, useRealtime, useRealtimeConnectionState, useRpc } from "@get-bb/plugin-sdk/app";
 import type { ExperimentalLiveFileTarget, PluginNavPanelProps, PluginRpcResult, PluginThreadPanelProps } from "@get-bb/plugin-sdk/app";
 import { fileContextSchema, safeAbsolutePath, type rpcContract } from "./contract";
@@ -182,6 +182,7 @@ function InboxPanel({ lockedProjectId }: Partial<PluginNavPanelProps> & { locked
     wasConnected.current = true;
   }, [realtimeState, refresh]);
 
+  const replyInFlight = useRef(false);
   const updateMessage = (next: OperatorMessage) => setMessages((current) => current.map((message) => messageKey(message) === messageKey(next) ? next : message));
   const currentProjectLabel = projectId ? projectNames.get(projectId) ?? projectId : "All projects";
   const replyKey = selectedMessage ? messageKey(selectedMessage) : null;
@@ -235,6 +236,25 @@ function InboxPanel({ lockedProjectId }: Partial<PluginNavPanelProps> & { locked
     return operation;
   };
 
+  const replyDisabled = replyingMessageKey !== null || pendingAction !== null || !selectedMessage || selectedMessage.replyAcceptedAtMs != null || !replyText.trim();
+  const sendReply = () => {
+    if (replyDisabled || replyInFlight.current || !selectedMessage || !replyKey) return;
+    replyInFlight.current = true;
+    const key = replyKey;
+    const text = replyText.trim();
+    setErrors([]);
+    setNotice(null);
+    setReplyingMessageKey(key);
+    void rpc.call("replyToOperatorMessage", { projectId: selectedMessage.projectId, messageId: selectedMessage.messageId, text })
+      .then((replied) => {
+        updateMessage(replied);
+        setDraft(key, "");
+        setNotice(`Reply accepted by BB (${replied.replyDelivery ?? "accepted"}). Provider consumption is not observed.`);
+      })
+      .catch((reason: unknown) => setErrors([String(reason)]))
+      .finally(() => { replyInFlight.current = false; setReplyingMessageKey(null); });
+  };
+
   return <main className="h-full min-w-0 overflow-y-auto p-3"><div className="mx-auto grid w-full min-w-0 max-w-3xl gap-3">
     <header className="flex flex-wrap items-center justify-between gap-2">
       <h1 className="text-xl font-semibold tracking-tight">Inbox</h1>
@@ -273,8 +293,13 @@ function InboxPanel({ lockedProjectId }: Partial<PluginNavPanelProps> & { locked
             {selected && selectedMessage && <div className="grid min-w-0 gap-4 border-t border-border p-3">
               {selectedSenderId && <a href="#" className="w-fit max-w-full break-words text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary" aria-label={`Open sender thread ${senderLabel(selectedMessage)}`} onClick={(event) => { event.preventDefault(); navigate.toThread(selectedSenderId); }}>Open sender thread</a>}
               <MessageBody key={messageKey(selectedMessage)} text={selectedMessage.text} message={selectedMessage} />
-          {selectedMessage.replyAcceptedAtMs != null ? <section aria-label="Reply accepted by BB" className="grid gap-2 rounded-md border border-border bg-muted/10 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold">Reply accepted by BB</h3><time className="text-xs text-muted-foreground" dateTime={new Date(selectedMessage.replyAcceptedAtMs).toISOString()} title={formatExactTime(selectedMessage.replyAcceptedAtMs)} aria-label={`Accepted ${formatExactTime(selectedMessage.replyAcceptedAtMs)}`}>{formatRelativeTime(selectedMessage.replyAcceptedAtMs)}</time></div><MessageBody text={selectedMessage.replyText ?? ""} /><p className="text-xs text-muted-foreground">BB reported {selectedMessage.replyDelivery ?? "accepted"}. Provider consumption is not observed.</p></section> : <section aria-label="Reply to sender" className="grid gap-3 border-t border-border pt-4"><label className="grid gap-1 text-sm" htmlFor={`operator-reply-${replyKey}`}><span className="sr-only">Reply text</span><textarea placeholder="Reply to sender" id={`operator-reply-${replyKey}`} className="min-h-24 w-full rounded-md border border-border bg-background p-2.5 text-sm leading-5 focus:bg-muted/50 focus:outline-none focus:ring-0" value={replyText} onChange={(event) => setDraft(replyKey!, event.target.value)} /></label></section>}
-          <Tooltip.Provider delayDuration={300}><div className="flex flex-wrap gap-2 border-t border-border pt-4"><button type="button" aria-label={replyingMessageKey === replyKey ? "Sending reply" : selectedMessage.replyAcceptedAtMs != null ? "Reply accepted by BB" : "Send reply"} title={replyingMessageKey === replyKey ? "Sending reply" : selectedMessage.replyAcceptedAtMs != null ? "Reply accepted by BB" : "Send reply"} disabled={replyingMessageKey !== null || pendingAction !== null || selectedMessage.replyAcceptedAtMs != null || !replyText.trim()} className="min-h-10 min-w-10 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity duration-150 hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary motion-reduce:transition-none" onClick={() => { const text = replyText.trim(); if (!text || !replyKey) return; setErrors([]); setNotice(null); setReplyingMessageKey(replyKey); void rpc.call("replyToOperatorMessage", { projectId: selectedMessage.projectId, messageId: selectedMessage.messageId, text }).then((replied) => { updateMessage(replied); setDraft(replyKey, ""); setNotice(`Reply accepted by BB (${replied.replyDelivery ?? "accepted"}). Provider consumption is not observed.`); }).catch((reason: unknown) => setErrors([String(reason)])).finally(() => setReplyingMessageKey(null)); }}><PaperPlaneTiltIcon aria-hidden="true" focusable="false" color="currentColor" weight="duotone" size={18} /></button>{selectedMessage.readAtMs === null ? <Tooltip.Root><Tooltip.Trigger asChild><button type="button" aria-busy={markReadPending} aria-label={markReadPending ? "Marking message read" : "Mark message read"} disabled={pendingAction !== null} className="min-h-10 min-w-10 rounded-md border border-border bg-background px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted active:bg-muted/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none" onClick={markSelectedMessageRead}><EnvelopeOpenIcon aria-hidden="true" focusable="false" color="currentColor" weight="duotone" size={18} /></button></Tooltip.Trigger><Tooltip.Portal><Tooltip.Content sideOffset={5} className="z-50 rounded-md border border-border bg-popover px-2 py-1 text-xs text-popover-foreground shadow-md">Mark as read</Tooltip.Content></Tooltip.Portal></Tooltip.Root> : null}{selectedMessage.archivedAtMs === null ? <Tooltip.Root><Tooltip.Trigger asChild><button type="button" aria-busy={pendingSelectedAction === "archive"} aria-label={pendingSelectedAction === "archive" ? "Archiving message" : "Archive message"} disabled={pendingAction !== null} className="min-h-10 min-w-10 rounded-md border border-border bg-background px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted active:bg-muted/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none" onClick={() => { void archiveMessage(selectedMessage).catch(() => undefined); }}><ArchiveIcon aria-hidden="true" focusable="false" weight="duotone" size={18} /></button></Tooltip.Trigger><Tooltip.Portal><Tooltip.Content sideOffset={5} className="z-50 rounded-md border border-border bg-popover px-2 py-1 text-xs text-popover-foreground shadow-md">Archive</Tooltip.Content></Tooltip.Portal></Tooltip.Root> : null}</div></Tooltip.Provider>
+          {selectedMessage.replyAcceptedAtMs != null ? <section aria-label="Reply accepted by BB" className="grid gap-2 rounded-md border border-border bg-muted/10 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold">Reply accepted by BB</h3><time className="text-xs text-muted-foreground" dateTime={new Date(selectedMessage.replyAcceptedAtMs).toISOString()} title={formatExactTime(selectedMessage.replyAcceptedAtMs)} aria-label={`Accepted ${formatExactTime(selectedMessage.replyAcceptedAtMs)}`}>{formatRelativeTime(selectedMessage.replyAcceptedAtMs)}</time></div><MessageBody text={selectedMessage.replyText ?? ""} /><p className="text-xs text-muted-foreground">BB reported {selectedMessage.replyDelivery ?? "accepted"}. Provider consumption is not observed.</p></section> : <section aria-label="Reply to sender" className="grid gap-3 border-t border-border pt-4"><label className="grid gap-1 text-sm" htmlFor={`operator-reply-${replyKey}`}><span className="sr-only">Reply text</span><textarea placeholder="Reply to sender" id={`operator-reply-${replyKey}`} className="min-h-24 w-full rounded-md border border-border bg-background p-2.5 text-sm leading-5 focus:bg-muted/50 focus:outline-none focus:ring-0" value={replyText} onChange={(event) => setDraft(replyKey!, event.target.value)} aria-describedby={`operator-reply-hint-${replyKey}`} onKeyDown={(event) => {
+            if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (!event.repeat) sendReply();
+          }} /></label><p id={`operator-reply-hint-${replyKey}`} className="text-xs text-muted-foreground">Enter to send · Shift+Enter for a new line</p></section>}
+          <Tooltip.Provider delayDuration={300}><div className="flex flex-wrap gap-2 border-t border-border pt-4"><button type="button" aria-label={replyingMessageKey === replyKey ? "Sending reply" : selectedMessage.replyAcceptedAtMs != null ? "Reply accepted by BB" : "Send reply"} title={replyingMessageKey === replyKey ? "Sending reply" : selectedMessage.replyAcceptedAtMs != null ? "Reply accepted by BB" : "Send reply"} disabled={replyDisabled} className="min-h-10 min-w-10 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity duration-150 hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary motion-reduce:transition-none" onClick={sendReply}><PaperPlaneTiltIcon aria-hidden="true" focusable="false" color="currentColor" weight="duotone" size={18} /></button>{selectedMessage.readAtMs === null ? <Tooltip.Root><Tooltip.Trigger asChild><button type="button" aria-busy={markReadPending} aria-label={markReadPending ? "Marking message read" : "Mark message read"} disabled={pendingAction !== null} className="min-h-10 min-w-10 rounded-md border border-border bg-background px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted active:bg-muted/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none" onClick={markSelectedMessageRead}><EnvelopeOpenIcon aria-hidden="true" focusable="false" color="currentColor" weight="duotone" size={18} /></button></Tooltip.Trigger><Tooltip.Portal><Tooltip.Content sideOffset={5} className="z-50 rounded-md border border-border bg-popover px-2 py-1 text-xs text-popover-foreground shadow-md">Mark as read</Tooltip.Content></Tooltip.Portal></Tooltip.Root> : null}{selectedMessage.archivedAtMs === null ? <Tooltip.Root><Tooltip.Trigger asChild><button type="button" aria-busy={pendingSelectedAction === "archive"} aria-label={pendingSelectedAction === "archive" ? "Archiving message" : "Archive message"} disabled={pendingAction !== null} className="min-h-10 min-w-10 rounded-md border border-border bg-background px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted active:bg-muted/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none" onClick={() => { void archiveMessage(selectedMessage).catch(() => undefined); }}><ArchiveIcon aria-hidden="true" focusable="false" weight="duotone" size={18} /></button></Tooltip.Trigger><Tooltip.Portal><Tooltip.Content sideOffset={5} className="z-50 rounded-md border border-border bg-popover px-2 py-1 text-xs text-popover-foreground shadow-md">Archive</Tooltip.Content></Tooltip.Portal></Tooltip.Root> : null}</div></Tooltip.Provider>
             </div>}
           </div>
 
@@ -289,12 +314,17 @@ function useUnreadOperatorMessageCount() {
   const rpc = useRpc<typeof rpcContract>();
   const projectIds = useMemo(() => sidebar.projects.map(({ id }) => id), [sidebar.projects]);
   const [unread, setUnread] = useState(0);
+  const refreshSequence = useRef(0);
   const refresh = useCallback(() => {
+    const sequence = ++refreshSequence.current;
     if (projectIds.length === 0) { setUnread(0); return; }
-    void rpc.call("unreadOperatorMessageCount", { projectIds }).then(({ count }) => setUnread(count), () => undefined);
+    void rpc.call("unreadOperatorMessageCount", { projectIds }).then(({ count }) => { if (sequence === refreshSequence.current) setUnread(count); }, () => undefined);
   }, [projectIds, rpc]);
 
-  useEffect(refresh, [refresh]);
+  useEffect(() => {
+    refresh();
+    return () => { refreshSequence.current++; };
+  }, [refresh]);
   useRealtime(INBOX_CHANGED_CHANNEL, useCallback((payload: unknown) => {
     const changedProjectId = payload && typeof payload === "object" ? (payload as { projectId?: unknown }).projectId : null;
     if (typeof changedProjectId === "string" && projectIds.includes(changedProjectId)) refresh();
@@ -310,23 +340,42 @@ function useUnreadOperatorMessageCount() {
   return unread;
 }
 
-function InboxUnreadAccessory() {
+// Registered icons render outside plugin slots, so keep RPC/realtime hooks in
+// the app overlay and expose only the count to the icon through a React store.
+let inboxUnreadCount = 0;
+const inboxCountListeners = new Set<() => void>();
+const subscribeInboxCount = (listener: () => void) => {
+  inboxCountListeners.add(listener);
+  return () => { inboxCountListeners.delete(listener); };
+};
+const getInboxCount = () => inboxUnreadCount;
+function publishInboxCount(count: number) {
+  if (count === inboxUnreadCount) return;
+  inboxUnreadCount = count;
+  for (const listener of inboxCountListeners) listener();
+}
+function InboxCountController() {
   const unread = useUnreadOperatorMessageCount();
-
-  if (unread < 1) return null;
-  const label = `${unread} unread operator ${unread === 1 ? "message" : "messages"}`;
-  return <span role="status" aria-live="polite" aria-label={label} title={label} className="max-w-full truncate rounded-full bg-primary px-1.5 text-xs font-semibold leading-5 text-primary-foreground">{unread}</span>;
+  useEffect(() => { publishInboxCount(unread); }, [unread]);
+  useEffect(() => () => publishInboxCount(0), []);
+  return null;
 }
 
-function InboxUnreadAlert() {
-  const unread = useUnreadOperatorMessageCount();
-  const navigate = useBbNavigate();
-  if (unread < 1) return null;
-  const label = `Open Operator Inbox, ${unread} unread ${unread === 1 ? "message" : "messages"}`;
-  return <button type="button" aria-label={label} title={label} className="fixed bottom-16 left-2 z-50 flex h-9 w-9 items-center justify-center rounded-md text-foreground hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary" onClick={() => navigate.toPluginPanel("inbox") }>
-    <EnvelopeOpenIcon aria-hidden="true" focusable="false" color="currentColor" weight="duotone" size={19} />
-    <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-destructive px-1 text-center text-[10px] font-semibold leading-4 text-destructive-foreground">{unread > 99 ? "99+" : unread}</span>
-  </button>;
+const BADGE_STYLE: CSSProperties = {
+  position: "absolute", top: -4, right: -6, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "center",
+  // The host font's digit ink sits 1px below its line box; bottom padding optically centers it without resizing the badge.
+  minWidth: 14, height: 14, padding: "0 3px 2px", borderRadius: 7, fontSize: 9, fontWeight: 600, lineHeight: 1,
+  background: "var(--destructive)", color: "var(--destructive-foreground)",
+};
+
+function InboxIcon({ className }: { className?: string }) {
+  const unread = useSyncExternalStore(subscribeInboxCount, getInboxCount, getInboxCount);
+  const label = `${unread} unread operator ${unread === 1 ? "message" : "messages"}`;
+  // Registered icons render outside plugin CSS scope, so layout is inline.
+  return <span className={className} style={{ position: "relative", display: "inline-flex" }} title={label}>
+    <EnvelopeSimpleIcon aria-hidden="true" focusable="false" color="currentColor" weight="duotone" style={{ width: "100%", height: "100%" }} />
+    {unread > 0 && <span style={BADGE_STYLE}>{unread > 99 ? "99+" : unread}</span>}
+  </span>;
 }
 
 function InboxThreadPanel({ threadId }: PluginThreadPanelProps) {
@@ -337,7 +386,8 @@ function InboxThreadPanel({ threadId }: PluginThreadPanelProps) {
 }
 
 export default definePluginApp((app) => {
-  app.slots.experimental_appOverlay({ id: "inbox-alerts", component: InboxUnreadAlert });
-  app.slots.navPanel({ id: "inbox", title: "Inbox", icon: "./assets/envelope-simple-duotone.svg", path: "inbox", component: InboxPanel, experimental_sidebarAccessory: InboxUnreadAccessory });
+  app.experimental_icons.register({ name: "operator-inbox/inbox", component: InboxIcon });
+  app.slots.experimental_appOverlay({ id: "inbox-count", component: InboxCountController });
+  app.slots.navPanel({ id: "inbox", title: "Inbox", icon: "operator-inbox/inbox", path: "inbox", component: InboxPanel });
   app.slots.threadPanelAction({ id: "inbox", title: "Inbox", icon: "Mail", layout: "flush", component: InboxThreadPanel });
 });

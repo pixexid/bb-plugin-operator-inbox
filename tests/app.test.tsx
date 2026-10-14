@@ -113,6 +113,79 @@ describe("Operator Inbox panel", () => {
     expect(rendered.queryByText(/reply delivered/i)).toBeNull();
   });
 
+  it("sends trimmed multiline replies with Enter and ignores repeated submits while pending", async () => {
+    const { renderSlot } = await import("@get-bb/plugin-sdk/testing/app");
+    let finish!: (value: unknown) => void;
+    const reply = vi.fn(() => new Promise((resolve) => { finish = resolve; }));
+    const rendered = renderSlot((await loadApp()).navPanels[0]!, { subPath: "" }, {
+      sidebarThreads: { status: "ready", projects: [project], threads: [] },
+      rpc: handlers({ replyToOperatorMessage: reply }) as never,
+    });
+    const editor = await rendered.findByLabelText("Reply text");
+    fireEvent.change(editor, { target: { value: "  First line\nSecond line  " } });
+    expect(fireEvent.keyDown(editor, { key: "Enter" })).toBe(false);
+    fireEvent.keyDown(editor, { key: "Enter" });
+    fireEvent.click(rendered.getByRole("button", { name: "Sending reply" }));
+    expect(reply).toHaveBeenCalledTimes(1);
+    expect(reply).toHaveBeenCalledWith({ projectId: "project-a", messageId: 1, text: "First line\nSecond line" });
+    await act(async () => finish({ ...message, replyText: "First line\nSecond line", replyAcceptedAtMs: 4, readAtMs: 4, replyDelivery: "queued" }));
+    expect(await rendered.findByRole("region", { name: "Reply accepted by BB" })).toBeTruthy();
+    expect(window.sessionStorage.getItem("operator-inbox.drafts")).toBe("{}");
+  });
+
+  it("allows Shift+Enter and IME confirmation, and does not send empty or held Enter", async () => {
+    const { renderSlot } = await import("@get-bb/plugin-sdk/testing/app");
+    const rpc = handlers();
+    const rendered = renderSlot((await loadApp()).navPanels[0]!, { subPath: "" }, {
+      sidebarThreads: { status: "ready", projects: [project], threads: [] }, rpc: rpc as never,
+    });
+    const editor = await rendered.findByLabelText("Reply text");
+    fireEvent.keyDown(editor, { key: "Enter" });
+    fireEvent.change(editor, { target: { value: " " } });
+    fireEvent.keyDown(editor, { key: "Enter" });
+    fireEvent.change(editor, { target: { value: "Draft" } });
+    expect(fireEvent.keyDown(editor, { key: "Enter", shiftKey: true })).toBe(true);
+    expect(fireEvent.keyDown(editor, { key: "Enter", isComposing: true })).toBe(true);
+    expect(fireEvent.keyDown(editor, { key: "Enter", keyCode: 229 })).toBe(true);
+    fireEvent.keyDown(editor, { key: "Enter", repeat: true });
+    expect(rpc.replyToOperatorMessage).not.toHaveBeenCalled();
+    expect((editor as HTMLTextAreaElement).value).toBe("Draft");
+  });
+
+  it("keeps a failed Enter reply draft and allows retry with the send button", async () => {
+    const { renderSlot } = await import("@get-bb/plugin-sdk/testing/app");
+    const reply = vi.fn().mockRejectedValueOnce(new Error("Offline")).mockResolvedValue({ ...message, replyText: "Retry me", replyAcceptedAtMs: 4, readAtMs: 4, replyDelivery: "queued" });
+    const rendered = renderSlot((await loadApp()).navPanels[0]!, { subPath: "" }, {
+      sidebarThreads: { status: "ready", projects: [project], threads: [] },
+      rpc: handlers({ replyToOperatorMessage: reply }) as never,
+    });
+    const editor = await rendered.findByLabelText("Reply text");
+    fireEvent.change(editor, { target: { value: "Retry me" } });
+    fireEvent.keyDown(editor, { key: "Enter" });
+    await rendered.findByRole("alert");
+    await waitFor(() => expect((rendered.getByRole("button", { name: "Send reply" }) as HTMLButtonElement).disabled).toBe(false));
+    expect((editor as HTMLTextAreaElement).value).toBe("Retry me");
+    expect(window.sessionStorage.getItem("operator-inbox.drafts")).toContain("Retry me");
+    fireEvent.click(rendered.getByRole("button", { name: "Send reply" }));
+    await rendered.findByRole("region", { name: "Reply accepted by BB" });
+    expect(reply).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not send with Enter while a message mutation is pending", async () => {
+    const { renderSlot } = await import("@get-bb/plugin-sdk/testing/app");
+    let finish!: (value: unknown) => void;
+    const rpc = handlers({ markOperatorMessageRead: () => new Promise((resolve) => { finish = resolve; }) });
+    const rendered = renderSlot((await loadApp()).navPanels[0]!, { subPath: "" }, {
+      sidebarThreads: { status: "ready", projects: [project], threads: [] }, rpc: rpc as never,
+    });
+    const editor = await rendered.findByLabelText("Reply text");
+    fireEvent.change(editor, { target: { value: "Wait" } });
+    fireEvent.click(rendered.getByRole("button", { name: "Mark message read" }));
+    fireEvent.keyDown(editor, { key: "Enter" });
+    expect(rpc.replyToOperatorMessage).not.toHaveBeenCalled();
+    await act(async () => finish({ ...message, readAtMs: 2 }));
+  });
+
   it("marks read, archives, and fails closed on a foreign-project row", async () => {
     const { renderSlot } = await import("@get-bb/plugin-sdk/testing/app");
     const app = await loadApp();
@@ -159,42 +232,75 @@ describe("Operator Inbox panel", () => {
     expect(operatorMessages).toHaveBeenCalledWith({ projectIds: ["project-a"] });
   });
 
-  it("updates the unread accessory from realtime without polling", async () => {
+  it("updates the navigation icon from realtime and reconnect without polling", async () => {
     const { renderSlot } = await import("@get-bb/plugin-sdk/testing/app");
     const app = await loadApp();
+    expect(app.navPanels[0]!.icon).toBe("operator-inbox/inbox");
+    expect(app.icons[0]!.name).toBe("operator-inbox/inbox");
     let count = 1;
-    const unread = vi.fn(async () => ({ count }));
-    const rendered = renderSlot({ component: app.navPanels[0]!.experimental_sidebarAccessory! }, {}, {
+    const countRpc = vi.fn(async () => ({ count }));
+    const controller = renderSlot(app.appOverlays[0]!, {}, {
       sidebarThreads: { status: "ready", projects: [project], threads: [] },
-      rpc: handlers({ unreadOperatorMessageCount: unread }) as never,
+      rpc: handlers({ unreadOperatorMessageCount: countRpc }) as never,
     });
-
-    await waitFor(() => expect(rendered.getByRole("status").textContent).toBe("1"));
+    const icon = renderSlot(app.icons[0]!, { className: "test-icon-size" });
+    await icon.findByText("1");
+    expect(icon.container.querySelector(".test-icon-size")).toBeTruthy();
     count = 2;
-    await rendered.behavior.emitRealtime(INBOX_CHANGED_CHANNEL, { projectId: "project-a" });
-    await waitFor(() => expect(rendered.getByRole("status").textContent).toBe("2"));
-    expect(unread).toHaveBeenCalledTimes(2);
+    await controller.behavior.emitRealtime(INBOX_CHANGED_CHANNEL, { projectId: "project-b" });
+    expect(countRpc).toHaveBeenCalledTimes(1);
+    await controller.behavior.emitRealtime(INBOX_CHANGED_CHANNEL, { projectId: "project-a" });
+    await icon.findByText("2");
+    expect(countRpc).toHaveBeenCalledTimes(2);
+    await controller.behavior.setRealtimeConnectionState("reconnecting");
+    count = 3;
+    await controller.behavior.setRealtimeConnectionState("connected");
+    await icon.findByText("3");
   });
 
-  it("shows the footer alert only while messages are unread", async () => {
+  it("does not replace a newer count with a stale RPC response", async () => {
+    const { renderSlot } = await import("@get-bb/plugin-sdk/testing/app");
+    const app = await loadApp();
+    let finish!: (value: { count: number }) => void;
+    const countRpc = vi.fn().mockReturnValueOnce(new Promise((resolve) => { finish = resolve; })).mockResolvedValueOnce({ count: 1 });
+    const controller = renderSlot(app.appOverlays[0]!, {}, {
+      sidebarThreads: { status: "ready", projects: [project], threads: [] },
+      rpc: handlers({ unreadOperatorMessageCount: countRpc }) as never,
+    });
+    const icon = renderSlot(app.icons[0]!, {});
+    await controller.behavior.emitRealtime(INBOX_CHANGED_CHANNEL, { projectId: "project-a" });
+    await icon.findByText("1");
+    await act(async () => finish({ count: 2 }));
+    expect(icon.container.textContent).toBe("1");
+  });
+
+  it("keeps the navigation icon at zero and caps only the visible badge at 99+", async () => {
     const { renderSlot } = await import("@get-bb/plugin-sdk/testing/app");
     const app = await loadApp();
     let count = 0;
-    const unread = vi.fn(async () => ({ count }));
-    const rendered = renderSlot(app.appOverlays[0]!, {}, {
+    const countRpc = vi.fn(async () => ({ count }));
+    const controller = renderSlot(app.appOverlays[0]!, {}, {
       sidebarThreads: { status: "ready", projects: [project], threads: [] },
-      rpc: handlers({ unreadOperatorMessageCount: unread }) as never,
+      rpc: handlers({ unreadOperatorMessageCount: countRpc }) as never,
     });
-    await waitFor(() => expect(unread).toHaveBeenCalledTimes(1));
-    expect(rendered.queryByRole("button", { name: /Open Operator Inbox/ })).toBeNull();
-    count = 1;
-    await rendered.behavior.emitRealtime(INBOX_CHANGED_CHANNEL, { projectId: "project-a" });
-    const alert = await rendered.findByRole("button", { name: "Open Operator Inbox, 1 unread message" });
-    fireEvent.click(alert);
-    expect(rendered.inspection.navigateCalls).toContainEqual({ method: "toPluginPanel", path: "inbox", options: undefined });
+    const icon = renderSlot(app.icons[0]!, {});
+    await waitFor(() => expect(countRpc).toHaveBeenCalledTimes(1));
+    expect(icon.container.querySelector("svg")).toBeTruthy();
+    expect(icon.container.textContent).toBe("");
+    count = 120;
+    await controller.behavior.emitRealtime(INBOX_CHANGED_CHANNEL, { projectId: "project-a" });
+    const badge = await icon.findByText("99+");
+    expect(badge.style).toMatchObject({ position: "absolute", display: "flex", alignItems: "center", justifyContent: "center", minWidth: "14px", height: "14px", lineHeight: "1", paddingBottom: "2px" });
+    expect((icon.container.firstElementChild as HTMLElement).style.position).toBe("relative");
+    expect(icon.container.firstElementChild?.getAttribute("title")).toBe("120 unread operator messages");
     count = 0;
-    await rendered.behavior.emitRealtime(INBOX_CHANGED_CHANNEL, { projectId: "project-a" });
-    await waitFor(() => expect(rendered.queryByRole("button", { name: /Open Operator Inbox/ })).toBeNull());
+    await controller.behavior.emitRealtime(INBOX_CHANGED_CHANNEL, { projectId: "project-a" });
+    await waitFor(() => expect(icon.container.textContent).toBe(""));
+    count = 1;
+    await controller.behavior.emitRealtime(INBOX_CHANGED_CHANNEL, { projectId: "project-a" });
+    await icon.findByText("1");
+    controller.lifecycle.unmount();
+    await waitFor(() => expect(icon.container.textContent).toBe(""));
   });
 });
 

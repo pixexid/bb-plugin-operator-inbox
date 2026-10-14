@@ -1,4 +1,4 @@
-import { defineRpcContract } from "@get-bb/plugin-sdk";
+import type { PluginRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
 const id = z.string().trim().min(1).max(256);
@@ -47,7 +47,8 @@ export const fileContextSchema = z.object({
   storageRootPath: z.string().refine(safeAbsolutePath),
 }).strict();
 
-export const rpcContract = defineRpcContract({
+// Keep the shared contract browser-safe when Git installs omit SDK devDependencies.
+export const rpcContract = {
   messageFileContext: {
     input: messageMutationInputSchema,
     output: fileContextSchema.nullable(),
@@ -63,4 +64,4 @@ export const rpcContract = defineRpcContract({
   markOperatorMessageRead: { input: messageMutationInputSchema, output: operatorMessageSchema },
   archiveOperatorMessage: { input: messageMutationInputSchema, output: operatorMessageSchema },
   replyToOperatorMessage: { input: replyInputSchema, output: operatorMessageSchema },
-});
+} as const satisfies PluginRpcContract;
