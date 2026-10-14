@@ -2,6 +2,7 @@ import ReactMarkdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
+import { toast } from "sonner";
 import { ArchiveIcon, ArrowClockwiseIcon, CaretDownIcon, FileIcon, FileTextIcon, FilePdfIcon, ImageIcon, GlobeIcon, GithubLogoIcon, EnvelopeSimpleIcon, EnvelopeOpenIcon, PaperPlaneTiltIcon } from "@phosphor-icons/react";
 import { definePluginApp, UrlLink, experimental_useSidebarThreads, useBbNavigate, useRealtime, useRealtimeConnectionState, useRpc } from "@get-bb/plugin-sdk/app";
 import type { ExperimentalLiveFileTarget, PluginNavPanelProps, PluginRpcResult, PluginThreadPanelProps } from "@get-bb/plugin-sdk/app";
@@ -133,7 +134,6 @@ function InboxPanel({ lockedProjectId }: Partial<PluginNavPanelProps> & { locked
   const [replyingMessageKey, setReplyingMessageKey] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<PendingInboxAction | null>(null);
   const [errors, setErrors] = useState<readonly string[]>([]);
-  const [notice, setNotice] = useState<string | null>(null);
   const refreshSequence = useRef(0);
   const showArchivedRef = useRef(showArchived);
   showArchivedRef.current = showArchived;
@@ -153,7 +153,6 @@ function InboxPanel({ lockedProjectId }: Partial<PluginNavPanelProps> & { locked
   });
   const refresh = useCallback(() => {
     const sequence = ++refreshSequence.current;
-    setNotice(null);
     setLoading(true);
     if (projects.length === 0) { setMessages([]); setErrors([]); setLoading(false); return; }
     const requestedProjectIds = projects.map((project) => project.id);
@@ -200,7 +199,7 @@ function InboxPanel({ lockedProjectId }: Partial<PluginNavPanelProps> & { locked
     const operation = rpc.call("markOperatorMessageRead", { projectId, messageId }).then((read) => {
       setMessages((current) => current.map((item) => messageKey(item) === key ? { ...item, readAtMs: item.readAtMs ?? read.readAtMs } : item));
     }).catch((reason: unknown) => {
-      setErrors([`Could not mark message read: ${String(reason)}`]);
+      toast.error(`Could not mark message read: ${String(reason)}`);
     }).finally(() => {
       readOperations.current.delete(key);
       setPendingAction((current) => current === action ? null : current);
@@ -209,7 +208,7 @@ function InboxPanel({ lockedProjectId }: Partial<PluginNavPanelProps> & { locked
     return operation;
   }, [rpc]);
   const markSelectedMessageRead = () => {
-    if (selectedMessage) { setErrors([]); void markMessageRead(selectedMessage.projectId, selectedMessage.messageId); }
+    if (selectedMessage) void markMessageRead(selectedMessage.projectId, selectedMessage.messageId);
   };
   const archiveOperations = useRef(new Map<string, Promise<OperatorMessage>>());
   const archiveMessage = (message: OperatorMessage) => {
@@ -219,14 +218,12 @@ function InboxPanel({ lockedProjectId }: Partial<PluginNavPanelProps> & { locked
     const action: PendingInboxAction = { key, action: "archive" };
     const sequence = refreshSequence.current;
     setPendingAction(action);
-    setErrors([]);
-    setNotice(null);
     const operation = rpc.call("archiveOperatorMessage", { projectId: message.projectId, messageId: message.messageId }).then((archived) => {
       if (sequence === refreshSequence.current) setMessages((current) => showArchivedRef.current ? current.map((item) => messageKey(item) === key ? archived : item) : current.filter((item) => messageKey(item) !== key));
-      setNotice("Archived. Turn on Show archived to include it again.");
+      toast.success(showArchivedRef.current ? "Archived." : "Archived. Turn on Show archived to include it again.");
       return archived;
     }).catch((reason: unknown) => {
-      setErrors([String(reason)]);
+      toast.error(String(reason));
       throw reason;
     }).finally(() => {
       archiveOperations.current.delete(key);
@@ -242,16 +239,14 @@ function InboxPanel({ lockedProjectId }: Partial<PluginNavPanelProps> & { locked
     replyInFlight.current = true;
     const key = replyKey;
     const text = replyText.trim();
-    setErrors([]);
-    setNotice(null);
     setReplyingMessageKey(key);
     void rpc.call("replyToOperatorMessage", { projectId: selectedMessage.projectId, messageId: selectedMessage.messageId, text })
       .then((replied) => {
         updateMessage(replied);
         setDraft(key, "");
-        setNotice(`Reply accepted by BB (${replied.replyDelivery ?? "accepted"}). Provider consumption is not observed.`);
+        toast.success(`Reply accepted by BB (${replied.replyDelivery ?? "accepted"}). Provider consumption is not observed.`);
       })
-      .catch((reason: unknown) => setErrors([String(reason)]))
+      .catch((reason: unknown) => toast.error(String(reason)))
       .finally(() => { replyInFlight.current = false; setReplyingMessageKey(null); });
   };
 
@@ -266,7 +261,6 @@ function InboxPanel({ lockedProjectId }: Partial<PluginNavPanelProps> & { locked
       <button type="button" aria-label="Refresh inbox" title="Refresh inbox" className="flex min-h-9 min-w-9 items-center justify-center rounded-md border border-border text-foreground hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-50" onClick={refresh} disabled={loading}><ArrowClockwiseIcon aria-hidden="true" weight="duotone" size={16} /></button>
     </section>
     {errors.map((loadError) => <p role="alert" key={loadError} className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{loadError}</p>)}
-    {notice ? <p role="status" className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm text-primary">{notice}</p> : null}
     {sidebar.projects.length === 0 ? <section className="rounded-lg border border-dashed border-border p-6 text-center"><h2 className="font-medium">No projects available</h2><p className="mt-1 text-sm text-muted-foreground">A project is required before operator messages can appear here.</p></section> : <section aria-label={`${currentProjectLabel} messages`} className="grid min-w-0 gap-3">
       {!loading && messages.length === 0 ? <div className="rounded-lg border border-dashed border-border p-5"><p className="font-medium">No messages in this view</p><p className="mt-1 text-sm text-muted-foreground">Try another project or show archived messages.</p></div> : null}
       {messages.length > MAX_VISIBLE_INBOX_MESSAGES ? <p className="text-xs text-muted-foreground">Showing the first {MAX_VISIBLE_INBOX_MESSAGES} of {messages.length} messages. Newest messages appear first.</p> : null}
