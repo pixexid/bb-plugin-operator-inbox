@@ -2,7 +2,10 @@
 
 import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { toast } from "sonner";
 import { INBOX_CHANGED_CHANNEL } from "../contract";
+
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 const project = { id: "project-a", name: "Project A", isPersonal: false, href: "/projects/project-a", settingsHref: "/projects/project-a/settings" };
 const message = {
@@ -25,6 +28,8 @@ afterEach(() => {
   window.localStorage.clear();
   window.sessionStorage.clear();
   vi.restoreAllMocks();
+  vi.mocked(toast.success).mockClear();
+  vi.mocked(toast.error).mockClear();
   vi.useRealTimers();
 });
 
@@ -107,7 +112,9 @@ describe("Operator Inbox panel", () => {
     fireEvent.change(editor, { target: { value: "Proceed Tuesday" } });
     expect(window.sessionStorage.getItem("operator-inbox.drafts")).toContain("Proceed Tuesday");
     fireEvent.click(rendered.getByRole("button", { name: "Send reply" }));
-    expect(await rendered.findByText("Reply accepted by BB (queued). Provider consumption is not observed.")).toBeTruthy();
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Reply accepted by BB (queued). Provider consumption is not observed."));
+    expect(rendered.queryByText("Reply accepted by BB (queued). Provider consumption is not observed.")).toBeNull();
+    await rendered.findByRole("region", { name: "Reply accepted by BB" });
     expect(rpc.replyToOperatorMessage).toHaveBeenCalledWith({ projectId: "project-a", messageId: 1, text: "Proceed Tuesday" });
     expect(window.sessionStorage.getItem("operator-inbox.drafts")).toBe("{}");
     expect(rendered.queryByText(/reply delivered/i)).toBeNull();
@@ -162,7 +169,8 @@ describe("Operator Inbox panel", () => {
     const editor = await rendered.findByLabelText("Reply text");
     fireEvent.change(editor, { target: { value: "Retry me" } });
     fireEvent.keyDown(editor, { key: "Enter" });
-    await rendered.findByRole("alert");
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Error: Offline"));
+    expect(rendered.queryByRole("alert")).toBeNull();
     await waitFor(() => expect((rendered.getByRole("button", { name: "Send reply" }) as HTMLButtonElement).disabled).toBe(false));
     expect((editor as HTMLTextAreaElement).value).toBe("Retry me");
     expect(window.sessionStorage.getItem("operator-inbox.drafts")).toContain("Retry me");
@@ -205,7 +213,8 @@ describe("Operator Inbox panel", () => {
     await waitFor(() => expect(rendered.queryByRole("button", { name: "Mark message read" })).toBeNull());
     expect(rpc.markOperatorMessageRead).toHaveBeenCalledWith({ projectId: "project-a", messageId: 1 });
     fireEvent.click(rendered.getByRole("button", { name: "Archive message" }));
-    expect(await rendered.findByText("Archived. Turn on Show archived to include it again.")).toBeTruthy();
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Archived. Turn on Show archived to include it again."));
+    expect(rendered.queryByRole("status")).toBeNull();
 
     const contaminated = renderSlot(app.navPanels[0]!, { subPath: "" }, {
       sidebarThreads: { status: "ready", projects: [project], threads: [] },
@@ -487,7 +496,8 @@ it("keeps a failed read unread and allows a manual retry without an automatic re
     rpc: handlers({ markOperatorMessageRead: read }) as never,
   });
   fireEvent.click(await rendered.findByRole("button", { name: "Mark message read" }));
-  await rendered.findByText(/Could not mark message read:.*Offline/);
+  await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Could not mark message read: Error: Offline"));
+  expect(rendered.queryByRole("alert")).toBeNull();
   expect(read).toHaveBeenCalledTimes(1);
   expect(rendered.getByLabelText("Unread", { exact: true })).toBeTruthy();
   fireEvent.click(rendered.getByRole("button", { name: "Mark message read" }));
