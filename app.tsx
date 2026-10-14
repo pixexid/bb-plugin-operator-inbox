@@ -363,7 +363,8 @@ function InboxCountController() {
 
 const BADGE_STYLE: CSSProperties = {
   position: "absolute", top: -4, right: -6, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "center",
-  minWidth: 14, height: 14, padding: "0 3px", borderRadius: 7, fontSize: 9, fontWeight: 600, lineHeight: 1,
+  // The host font's digit ink sits 1px below its line box; bottom padding optically centers it without resizing the badge.
+  minWidth: 14, height: 14, padding: "0 3px 2px", borderRadius: 7, fontSize: 9, fontWeight: 600, lineHeight: 1,
   background: "var(--destructive)", color: "var(--destructive-foreground)",
 };
 
