@@ -54,8 +54,9 @@ before asking you to decide. Fewer, better requests make the unread count useful
 - **Organize:** filter by project and archive handled messages from the
   expanded card actions. Archived messages stay hidden until you choose
   **Show archived**.
-- **Feedback:** success and error results from archiving, replying, and marking
-  read appear as BB's native toasts, so controls do not shift while you work.
+- **Feedback:** archive and reply confirmations, plus archive, reply, and
+  mark-read errors, appear as BB's native toasts without inserting feedback rows
+  that shift the controls. Inbox load errors remain inline.
 
 Cards stay newest-first by creation time. Reading, replying, and archiving do
 not reorder the remaining messages. Reading or archiving is **not approval**
